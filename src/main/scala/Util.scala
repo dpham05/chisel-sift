@@ -8,6 +8,13 @@ case class ImageType(width:Int, height:Int, dwidth: Int = 8) {
   }
 }
 
+object ImageType {
+  def apply(filename: String): ImageType = {
+    val img = Image(filename)
+    new ImageType(img.w, img.h, img.d)
+  }
+}
+
 class Pixel extends Bundle {
   val r = UInt(width = 8)
   val g = UInt(width = 8)
@@ -19,8 +26,6 @@ class Coord(it: ImageType) extends Bundle {
   val row = UInt(OUTPUT,width=log2Up(it.height))
   
   override def clone: this.type = {
-    //new Coord(new ImageType(UInt(width=col.getWidth),
-    //  UInt(width=row.getWidth))).asInstanceOf[this.type];
     try {
       super.clone()
     } catch {
@@ -65,4 +70,54 @@ class ImageCounter(it: ImageType) extends Module {
   io.out.row := row_counter.io.count
 
   io.top := col_counter.io.top & row_counter.io.top
+}
+
+object ShiftRegisterEn {
+  def apply[T <: Data](data: T, delay: Int, enable: Bool = Bool(true), 
+    use_mem: Boolean = false): T = {
+
+    if(use_mem) {
+      val srm = Module(new ShiftRegisterMem[T](data, delay))
+      srm.io.in := data
+      srm.io.en := enable
+      srm.io.out
+    } else {
+      if (delay == 1) {
+        RegEnable(data, enable)
+      } else {
+        RegEnable(apply(data, delay-1, enable), enable)
+      }
+    }
+  }
+}
+
+class ShiftRegisterMem[T <: Data](
+  gen: T, delay: Int, enable: Bool = Bool(true)) extends Module {
+
+  val io = new Bundle {
+    val in = gen.clone.asInput
+    val out = gen.clone.asOutput
+    val en = Bool(INPUT)
+  }
+
+  //println("Gen: %s\nIn: %s\nOut: %s".format(gen, io.in, io.out))
+  val buf = Mem(io.in, delay)
+  val ptr = Module(new Counter(delay-1))
+  ptr.io.en := io.en
+  when(io.en) {
+    buf(ptr.io.count) := io.in
+  }
+  io.out := buf(ptr.io.count)
+}
+
+object TapDelayLineEn {
+  def apply[T <: Data](data: T, delay: Int, enable: Bool = Bool(true), 
+    use_mem: Boolean = false, tap: Int = 1): List[T] = {
+    
+    if (tap <= 1) List(data)
+    else {
+      data :: apply(ShiftRegisterEn(data, delay, enable, use_mem),
+      delay, enable, use_mem, tap-1)
+    }
+  }
 }
